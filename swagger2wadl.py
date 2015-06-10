@@ -1,7 +1,10 @@
 __author__ = 'chris'
 
+"""Swagger to WADL utility"""
+
 import sys, urllib3, json, re
 import xml.etree.ElementTree as tree
+from argparse import ArgumentParser
 
 def camel_case(value):
     words = value.split("_")
@@ -21,36 +24,27 @@ def add_request(parent, parameters):
 
 
 def add_responses(parent, responses):
-    """Add responses"""
-    success = ' '.join(str(response['code']) for response in responses if response['code'] < 400)
-    failure = ' '.join(str(response['code']) for response in responses if response['code'] >= 400 and response['code'] != 404)
-    not_found = ' '.join(str(response['code']) for response in responses if response['code'] == 404)
+    for response_message in responses:
+        response = tree.SubElement(parent, 'response', {'status': str(response_message['code'])})
 
-    response = tree.SubElement(parent, 'response', {'status': success})
-    tree.SubElement(response, 'representation', {'mediaType': 'application/json'})
+        if 'message' in response_message:
+            doc = tree.SubElement(response, 'doc')
+            doc.text = response_message['message']
 
-    response = tree.SubElement(parent, 'response', {'status': failure})
-    tree.SubElement(response, 'representation', {'mediaType': 'application/json'})
-
-    tree.SubElement(parent, 'response', {'status': "401" + (" 404" if not_found else "")})
+        if 'responseModel' in response_message:
+            tree.SubElement(response,'representation',
+                            {'mediaType': 'application/json', 'json:describedBy': response_message['responseModel']})
 
 def add_parameters(parent, parameters):
     for param in parameters:
         param_name = camel_case(param['name'])
         required = str(param['required']).lower()
-        #parameter = parent.find('.//param[@name="%s"]'% param_name)
 
-        #if parameter is None:
         if param['paramType'] not in ['body', 'path']:
             tree.SubElement(parent, 'param',
                                 {'name': param_name,
                                  'style': param['paramType'],
                                  'required': required})
-        #else:
-        #    """Make sure that query parameters are made optional if they need to be
-        #    Necessary evil given differences between parameter setting in Swagger and WADL"""
-        #    if 'required' in parameter.attrib and parameter.attrib['required'] == 'true' and required == 'false':
-        #        parameter.attrib['required'] = required
 
 def add_operations(parent, operations):
     for operation in operations:
@@ -90,7 +84,7 @@ def create_wadl(spec, endpoint):
             param = camel_case(param.group().replace("/",""))
             template = tree.SubElement(resource, 'resource', {'path': param})
             tree.SubElement(template, 'param',
-                            {'path': re.sub('(\{|\})','',param), 'style': 'template', 'required': 'true'})
+                            {'name': re.sub('(\{|\})','',param), 'style': 'template', 'required': 'true'})
             add_operations(template, api['operations'])
 
         else:
@@ -110,15 +104,14 @@ def create_wadl(spec, endpoint):
     tree.dump(wadl)
 
 def main():
-    try:
-        spec_url, endpoint = sys.argv[1], sys.argv[2]
-
-    except:
-        raise Exception('Missing parameters: [spec url]')
+    argp = ArgumentParser("Create WADL from Swagger specification")
+    argp.add_argument("url", help="Swagger URL (JSON spec)")
+    argp.add_argument("endpoint", help="Real API protocol/host/port")
+    args = argp.parse_args()
 
     manager = urllib3.PoolManager()
-    spec = json.loads(manager.urlopen('GET', spec_url).data.decode("utf-8"))
-    create_wadl(spec, endpoint)
+    spec = json.loads(manager.urlopen('GET', args.url).data.decode("utf-8"))
+    create_wadl(spec, args.endpoint)
 
 if __name__ == "__main__":
     main()
